@@ -1,0 +1,198 @@
+
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta http-equiv="X-UA-Compatible" content="IE=edge">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<!-- The above 3 meta tags *must* come first in the head; any other head content must come *after* these tags -->
+		<title>Asset Tracker</title>
+
+		<!-- Bootstrap -->
+		<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap.min.css" integrity="sha512-dTfge/zgoMYpP7QbHy4gWMEGsbsdZeCXz7irItjcC3sPUFtf0kuFbDz/ixG7ArTxmDjLXDmezHubeNikyKGVyQ==" crossorigin="anonymous">
+		<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap-theme.min.css" integrity="sha384-aUGj/X2zp5rLCbBxumKTCw2Z50WgIr1vs/PFN4praOTvYXWlVyh2UtNUU0KAUhAX" crossorigin="anonymous">
+		<!-- HTML5 shim and Respond.js for IE8 support of HTML5 elements and media queries -->
+		<!-- WARNING: Respond.js doesn't work if you view the page via file:// -->
+		<!--[if lt IE 9]>
+			<script src="https://oss.maxcdn.com/html5shiv/3.7.2/html5shiv.min.js"></script>
+			<script src="https://oss.maxcdn.com/respond/1.4.2/respond.min.js"></script>
+		<![endif]-->
+
+		<style type="text/css">
+			body {
+				padding-top: 50px;
+			}
+			.starter-template {
+				padding: 40px 15px;
+				text-align: center;
+			}
+			#map {
+				height: 600px;
+			}
+		</style>
+	</head>
+	<body>
+		<nav class="navbar navbar-inverse navbar-fixed-top">
+			<div class="container">
+				<div class="navbar-header">
+					<a class="navbar-brand" href="#">Asset Tracker Map</a>
+				</div>
+			</div>
+		</nav>
+
+		<div class="container">
+
+			<div class="starter-template">
+				<div id="spark-login"></div>
+				<div id="deviceChooser">
+					<form>
+						<select id="deviceSelect"></select>
+					</form>
+				</div>
+				<div id="map"></div>
+				<div id="latlon">Waiting for GPS events...</div>
+			</div>
+
+		</div><!-- /.container -->
+
+		<!-- jQuery (necessary for Bootstrap's JavaScript plugins) -->
+		<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.3/jquery.min.js"></script>
+		<script src="https://cdn.jsdelivr.net/simplestorage/0.2.0/simpleStorage.min.js"></script>
+		<script type="text/javascript" src="https://cdn.jsdelivr.net/sparkjs/0.5.9/spark.min.js"></script>
+		<!-- Include all compiled plugins (below), or include individual files as needed -->
+		<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/js/bootstrap.min.js" integrity="sha512-K1qjQ+NcF2TYO/eI3M6v8EiNYZfA95pQumfvcVrTHtwQVDG+aHRqLi/ETn2uB+1JqwYqVG3LIvdm9lj6imS/pQ==" crossorigin="anonymous"></script>
+		<script>
+			var map;
+			function initMap() {
+				console.log('map init');
+				map = new google.maps.Map(document.getElementById('map'), {
+					center: {lat: -34.397, lng: 150.644},
+					zoom: 19,
+					mapTypeId: google.maps.MapTypeId.HYBRID
+				});
+			}
+
+			$(function(){
+				var accessToken;
+				var deviceName;
+				var device;
+				var gpslocation;
+				var markersArray = [];
+
+				$('#spark-login').hide();
+				$('#deviceChooser').hide();
+				$('#map').hide();
+
+				$('#deviceSelect').on('change', function(){
+					deviceName = $('#deviceSelect').val();
+					simpleStorage.set("assettracker_deviceName", deviceName);
+					go();
+				});
+
+				$('.btnMove').on('click', function(){
+					var position = $(this).attr('data-pos');
+					var cm = positions[position];
+					console.log('Move to ' + cm);
+					device.callFunction('setHeight', cm, function(err, data) {
+						if (err) {
+							console.log('An error occurred:', err);
+						} else {
+							console.log('Function called succesfully:', data);
+						}
+					});
+				});
+
+				function loadDevice() {
+					deviceName = simpleStorage.get("assettracker_deviceName");
+
+					if (typeof deviceName == 'undefined') {
+						$('#deviceChooser').show();
+						spark.listDevices(function(err, devices) {
+							if (err) {
+								accessToken = null;
+								simpleStorage.deleteKey("accessToken");
+								login();
+								return;
+							}
+							$('#deviceSelect').empty();
+							$('#deviceSelect').append('<option value="">Choose Device</option>');
+							$.each(devices, function(i, device){
+								$('#deviceSelect').append('<option value="' + device.name + '">' + device.name + '</option>');
+							});
+						});
+					} else {
+						go();
+					}
+				}
+
+				function login() {
+					// Check to see if we have a spark accessToken
+					accessToken = simpleStorage.get("accessToken");
+
+					if (typeof accessToken == 'undefined') {
+						$('#spark-login').show();
+
+						sparkLogin(function(data) {
+							accessToken = spark.accessToken;
+							simpleStorage.set("accessToken", accessToken);
+							$('#spark-login').hide();
+							loadDevice();
+						});
+					} else {
+						spark.login({accessToken: accessToken}, function(data) {
+							loadDevice();
+						});
+					}
+				}
+
+				function clearMarkers() {
+					for (var i = 0; i < markersArray.length; i++ ) {
+						markersArray[i].setMap(null);
+					}
+					markersArray.length = 0;
+				}
+
+				function go() {
+					$('#spark-login').hide();
+					$('#deviceChooser').hide();
+					$('#map').show();
+
+					spark.getDevice(deviceName, function(err, d) {
+						device = d;
+
+						device.onEvent(false, function(data){
+							if (data.name == "G") {
+								var gpslocation = data.data.split(',');
+								var lat = parseFloat(gpslocation[0]);
+								var lon = parseFloat(gpslocation[1]);
+
+								var mylocation=new google.maps.LatLng(lat, lon);
+
+								$('#latlon').html(gpslocation[0] + ' : ' + gpslocation[1]);
+
+								// clearMarkers();
+
+								marker = new google.maps.Marker({
+									position: mylocation,
+									draggable: false,
+								});
+
+								markersArray.push(marker);
+
+								marker.setMap(map);
+								map.panTo(marker.getPosition());
+							}
+
+							console.log(data);
+						});
+					});
+				}
+
+				login();
+
+			});
+		</script>
+		<script src="https://maps.googleapis.com/maps/api/js?key={{YOUR_GOOGLE_API_TOKEN}}&callback=initMap" async defer></script>
+
+	</body>
+</html>
